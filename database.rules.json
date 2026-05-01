@@ -1,0 +1,26 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "meta": {
+          ".write": "auth != null"
+        },
+        "teams": {
+          "$teamId": {
+            ".write": "auth != null"
+          }
+        },
+        "auction": {
+          ".write": "auth != null"
+        },
+        "participants": {
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || data.parent().parent().child('meta/hostId').val() === auth.uid)"
+          }
+        }
+      }
+    }
+  }
+}
