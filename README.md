@@ -90,4 +90,3 @@ src/
     ├── sounds.ts         ← Web Audio sounds
     └── squadRules.ts     ← Squad validation
 ```
-Made by Sankhadeep

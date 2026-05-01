@@ -1,8 +1,16 @@
 export type Role = 'BAT' | 'BOWL' | 'AR' | 'WK';
 export type Nationality = 'Indian' | 'Overseas';
-export type GamePhase = 'waiting' | 'auction' | 'rapid' | 'finished';
+export type GamePhase = 'waiting' | 'auction' | 'break' | 'rapid' | 'finished';
 export type AIStrategy = 'aggressive' | 'conservative' | 'balanced';
 export type Form = 'Excellent' | 'Good' | 'Average' | 'Poor';
+export type PoolName = 'BOWL_1' | 'BAT_1' | 'AR' | 'WK' | 'BOWL_2' | 'BAT_2' | 'RAPID';
+
+export interface PoolMeta {
+  name: PoolName;
+  label: string;
+  start: number;  // inclusive index into flat queue
+  end: number;    // exclusive
+}
 
 export interface PlayerStats {
   matches: number;
@@ -17,12 +25,12 @@ export interface Player {
   id: string;
   name: string;
   role: Role;
-  rating: number;       // 60–98
-  basePrice: number;    // in Lakhs (e.g., 200 = 2 Cr)
+  rating: number;
+  basePrice: number;
   nationality: Nationality;
   stats: PlayerStats;
   form: Form;
-  iplTeam?: string;     // usual team nickname
+  iplTeam?: string;
 }
 
 export interface TeamInfo {
@@ -38,12 +46,12 @@ export interface TeamInfo {
 export interface SoldEntry {
   playerId: string;
   teamId: string;
-  price: number; // in Lakhs
+  price: number;
 }
 
 export interface TeamState {
-  purse: number;        // remaining in Lakhs
-  soldPlayers: string;  // JSON: SoldEntry[]
+  purse: number;
+  soldPlayers: string;
   isAI: boolean;
   ownerUid: string | null;
   ownerName: string | null;
@@ -52,16 +60,21 @@ export interface TeamState {
 
 export interface AuctionData {
   phase: GamePhase;
-  queue: string;        // JSON: string[] player IDs
+  queue: string;            // JSON: string[] flat player IDs across all pools
+  pools: string;            // JSON: PoolMeta[]
+  currentPoolIdx: number;
   queueIndex: number;
-  unsoldIds: string;    // JSON: string[]
-  soldLog: string;      // JSON: SoldEntry[]
-  currentBid: number;   // in Lakhs
+  unsoldIds: string;
+  soldLog: string;
+  currentBid: number;
   currentBidderTeamId: string | null;
-  timerEnd: number;     // Date.now() + duration
+  timerEnd: number;
+  poolBreakEnd: number;     // 0 = not in break
   announcement: string;
-  hammerTeamId: string | null; // triggers sold animation
-  bidCount: number;     // increments on each bid to trigger re-renders
+  speechText: string;       // TTS text broadcast to all clients
+  speechSeq: number;        // increments to trigger re-speak
+  hammerTeamId: string | null;
+  bidCount: number;
 }
 
 export interface Participant {
@@ -85,19 +98,6 @@ export interface RoomData {
   auction: AuctionData;
 }
 
-export interface ParsedTeamState {
-  teamId: string;
-  info: TeamInfo;
-  purse: number;
-  soldEntries: SoldEntry[];
-  isAI: boolean;
-  ownerUid: string | null;
-  ownerName: string | null;
-  aiStrategy: AIStrategy;
-  playerCount: number;
-  overseasCount: number;
-}
-
 export interface ScoreEntry {
   teamId: string;
   teamInfo: TeamInfo;
@@ -119,5 +119,5 @@ export const SQUAD_RULES = {
   minBAT: 4,
   minBOWL: 4,
   minAR: 2,
-  startingPurse: 12000, // 120 Cr in Lakhs
+  startingPurse: 12000,
 };
