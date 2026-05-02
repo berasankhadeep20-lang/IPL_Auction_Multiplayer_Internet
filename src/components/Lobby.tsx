@@ -7,180 +7,84 @@ import { SQUAD_RULES } from '../types';
 export default function Lobby() {
   const store = useGameStore();
   const { selectTeam, joinAsSpectator, startGame } = useGameRoom();
-
-  const room    = store.roomData;
-  const teams   = room?.teams ?? {};
-  const parts   = Object.values(room?.participants ?? {});
-  const humanCount = Object.values(teams).filter(t => !t.isAI).length;
+  const room   = store.roomData;
+  const teams  = room?.teams ?? {};
+  const parts  = Object.values(room?.participants ?? {});
 
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column', overflow:'hidden' }}>
-      {/* Top bar */}
-      <div style={{
-        padding: '12px 20px',
-        background: 'var(--surface)',
-        borderBottom: '1px solid var(--border)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexShrink: 0,
-      }}>
-        <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:2, color:'var(--gold)' }}>
-          🏏 IPL AUCTION LOBBY
+      {/* Header */}
+      <div style={{ padding:'10px 16px', background:'var(--surface)', borderBottom:'1px solid var(--border)',
+        display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+        <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:20, letterSpacing:2, color:'var(--gold)' }}>
+          🏏 AUCTION LOBBY
         </span>
-        <div className="flex gap-3 items-center">
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           {store.roomId && (
-            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-              <span style={{ color:'var(--muted)', fontSize:12 }}>ROOM CODE</span>
-              <span style={{
-                background:'var(--surface2)', border:'1px solid var(--border)',
-                padding:'4px 14px', borderRadius:8, fontFamily:'monospace', fontSize:16,
-                color:'var(--gold)', letterSpacing:4, cursor:'pointer',
-              }}
+            <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+              <span style={{ fontSize:11, color:'var(--muted)' }}>ROOM</span>
+              <span style={{ background:'var(--surface2)', border:'1px solid var(--border)',
+                padding:'3px 12px', borderRadius:7, fontFamily:'monospace', fontSize:15,
+                color:'var(--gold)', letterSpacing:4, cursor:'pointer' }}
                 onClick={() => navigator.clipboard.writeText(store.roomId!)}
-                title="Click to copy"
-              >{store.roomId}</span>
+                title="Click to copy">
+                {store.roomId}
+              </span>
             </div>
           )}
-          <span style={{ color:'var(--muted)', fontSize:12 }}>
-            👥 {parts.length} connected
-          </span>
+          <span style={{ fontSize:11, color:'var(--muted)' }}>👥 {parts.length}</span>
         </div>
       </div>
 
-      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
-        {/* Left — team grid */}
-        <div style={{ flex:1, overflowY:'auto', padding:20 }}>
-          <div style={{ marginBottom:16, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-            <h2 style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:20, letterSpacing:1 }}>
-              SELECT YOUR TEAM
-            </h2>
-            <span style={{ color:'var(--muted)', fontSize:12 }}>
-              {humanCount} / 10 human spots filled
-            </span>
+      <div style={{ flex:1, display:'flex', overflow:'hidden', flexDirection:'column' }}>
+        {/* Team grid */}
+        <div style={{ flex:1, overflowY:'auto', padding:14 }}>
+          <div style={{ marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <h2 style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:18, letterSpacing:1 }}>SELECT YOUR TEAM</h2>
+            <span style={{ fontSize:11, color:'var(--muted)' }}>{Object.values(teams).filter(t=>!t.isAI).length}/10 human</span>
           </div>
-
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))', gap:12 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:10 }}>
             {IPL_TEAMS.map(team => {
-              const ts        = teams[team.id];
-              const isMine    = store.myTeamId === team.id;
-              const takenByOther = ts && !ts.isAI && ts.ownerUid !== store.uid;
-              const ownerName = ts?.ownerName;
-
+              const ts = teams[team.id];
+              const mine  = store.myTeamId === team.id;
+              const taken = ts && !ts.isAI && ts.ownerUid !== store.uid;
               return (
-                <button key={team.id}
-                  onClick={() => !takenByOther && selectTeam(team.id)}
-                  disabled={!!takenByOther}
-                  style={{
-                    background: isMine
-                      ? `linear-gradient(135deg, ${team.primary}33, ${team.secondary}22)`
-                      : 'var(--surface2)',
-                    border: `2px solid ${isMine ? team.primary : takenByOther ? '#333' : 'var(--border)'}`,
-                    borderRadius: 12,
-                    padding: '16px 12px',
-                    cursor: takenByOther ? 'not-allowed' : 'pointer',
-                    opacity: takenByOther ? .45 : 1,
-                    transition: 'all .2s',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 8,
-                    position: 'relative',
-                  }}>
-                  {isMine && (
-                    <span style={{
-                      position:'absolute', top:6, right:8,
-                      fontSize:10, color:team.primary, fontWeight:700,
-                    }}>✓ YOU</span>
-                  )}
-                  <img src={team.logo} alt={team.shortName}
-                    style={{ width:60, height:60, objectFit:'contain', borderRadius:8 }} />
+                <button key={team.id} onClick={() => !taken && selectTeam(team.id)} disabled={!!taken}
+                  style={{ background: mine ? `linear-gradient(135deg,${team.primary}33,${team.secondary}22)` : 'var(--surface2)',
+                    border:`2px solid ${mine ? team.primary : taken ? '#333' : 'var(--border)'}`,
+                    borderRadius:10, padding:'14px 10px', cursor:taken?'not-allowed':'pointer',
+                    opacity:taken?.45:1, transition:'all .2s', display:'flex', flexDirection:'column',
+                    alignItems:'center', gap:7, position:'relative', color:'var(--text)' }}>
+                  {mine && <span style={{ position:'absolute', top:5, right:8, fontSize:9, color:team.primary, fontWeight:700 }}>✓ YOU</span>}
+                  <img src={team.logo} alt={team.shortName} style={{ width:52, height:52, objectFit:'contain', borderRadius:7 }}/>
                   <div style={{ textAlign:'center' }}>
-                    <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:16, fontWeight:700, letterSpacing:.5 }}>
-                      {team.shortName}
-                    </div>
-                    <div style={{ fontSize:10, color:'var(--muted)', marginTop:2 }}>
-                      {team.name}
-                    </div>
+                    <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:15, fontWeight:700 }}>{team.shortName}</div>
+                    <div style={{ fontSize:9, color:'var(--muted)', marginTop:1 }}>{formatPrice(SQUAD_RULES.startingPurse)}</div>
                   </div>
-                  <div style={{ fontSize:11, color:'var(--muted)' }}>
-                    💰 {formatPrice(SQUAD_RULES.startingPurse)}
-                  </div>
-                  {takenByOther && ownerName && (
-                    <div style={{ fontSize:10, color:'#f59e0b' }}>🔒 {ownerName}</div>
-                  )}
-                  {ts && !ts.isAI && !takenByOther && !isMine && (
-                    <div style={{ fontSize:10, color:'var(--green)' }}>✅ Available</div>
-                  )}
+                  {taken && ts?.ownerName && <div style={{ fontSize:9, color:'#f59e0b' }}>🔒 {ts.ownerName}</div>}
                 </button>
               );
             })}
           </div>
-
-          {/* Spectator button */}
           {!store.isSpectator && !store.myTeamId && (
-            <button className="btn btn-ghost" style={{ marginTop:16 }}
-              onClick={joinAsSpectator}>
+            <button className="btn btn-ghost btn-sm" style={{ marginTop:14 }} onClick={joinAsSpectator}>
               👁️ Watch as Spectator
             </button>
           )}
-          {store.isSpectator && (
-            <div style={{ marginTop:16, color:'var(--muted)', fontSize:13 }}>
-              👁️ You are watching as spectator
-            </div>
-          )}
         </div>
 
-        {/* Right — participants + start */}
-        <div style={{
-          width: 260,
-          borderLeft: '1px solid var(--border)',
-          padding: 16,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
-          overflowY: 'auto',
-          flexShrink: 0,
-        }}>
-          <div>
-            <h3 style={{ fontSize:13, color:'var(--muted)', marginBottom:10, letterSpacing:1 }}>
-              PARTICIPANTS
-            </h3>
-            <div className="flex-col gap-2">
-              {parts.map((p, i) => (
-                <div key={i} className="flex items-center gap-2" style={{ fontSize:13 }}>
-                  <span style={{ fontSize:16 }}>{p.isSpectator ? '👁️' : '🎮'}</span>
-                  <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.name}</span>
-                  {p.teamId && (
-                    <img src={IPL_TEAMS.find(t=>t.id===p.teamId)?.logo} alt=""
-                      style={{ width:20, height:20, objectFit:'contain' }} />
-                  )}
-                </div>
-              ))}
-            </div>
+        {/* Bottom bar */}
+        <div style={{ borderTop:'1px solid var(--border)', padding:'12px 16px', background:'var(--surface)',
+          display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, gap:12, flexWrap:'wrap' }}>
+          <div style={{ fontSize:11, color:'var(--muted)', display:'flex', gap:12, flexWrap:'wrap' }}>
+            <span>👥 {parts.map(p=>`${p.name}${p.teamId?' ('+IPL_TEAMS.find(t=>t.id===p.teamId)?.shortName+')':''}${p.isSpectator?' 👁️':''}`).join(' · ')}</span>
           </div>
-
-          <div style={{ borderTop:'1px solid var(--border)', paddingTop:16 }}>
-            <div style={{ fontSize:12, color:'var(--muted)', marginBottom:12, lineHeight:1.7 }}>
-              <div>👤 Remaining teams: <strong style={{color:'var(--text)'}}>AI</strong></div>
-              <div>📋 Max squad: <strong style={{color:'var(--text)'}}>25</strong></div>
-              <div>🌍 Overseas cap: <strong style={{color:'var(--text)'}}>8</strong></div>
-              <div>💰 Purse: <strong style={{color:'var(--gold)'}}>₹120 Cr</strong></div>
-              <div>🏏 Players: <strong style={{color:'var(--text)'}}>500+</strong></div>
-            </div>
-
-            {store.isHost && (
-              <button className="btn btn-gold btn-lg w-full animate-pulse-gold"
-                onClick={startGame}
-                disabled={!store.roomData?.meta.started === false && false}
-              >
-                🚀 START AUCTION
-              </button>
-            )}
-            {!store.isHost && (
-              <div style={{ textAlign:'center', color:'var(--muted)', fontSize:12 }}>
-                Waiting for host to start…
-              </div>
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            <span style={{ fontSize:11, color:'var(--muted)' }}>📋 25 max · 🌍 8 overseas · 💰₹120Cr</span>
+            {store.isHost ? (
+              <button className="btn btn-gold animate-pulse-gold" onClick={startGame}>🚀 START</button>
+            ) : (
+              <span style={{ color:'var(--muted)', fontSize:12 }}>Waiting for host…</span>
             )}
           </div>
         </div>

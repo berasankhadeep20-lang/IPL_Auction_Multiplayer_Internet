@@ -8,8 +8,8 @@ export type PoolName = 'BOWL_1' | 'BAT_1' | 'AR' | 'WK' | 'BOWL_2' | 'BAT_2' | '
 export interface PoolMeta {
   name: PoolName;
   label: string;
-  start: number;  // inclusive index into flat queue
-  end: number;    // exclusive
+  start: number;
+  end: number;
 }
 
 export interface PlayerStats {
@@ -60,19 +60,20 @@ export interface TeamState {
 
 export interface AuctionData {
   phase: GamePhase;
-  queue: string;            // JSON: string[] flat player IDs across all pools
-  pools: string;            // JSON: PoolMeta[]
+  queue: string;           // JSON: string[] flat player IDs
+  pools: string;           // JSON: PoolMeta[]
   currentPoolIdx: number;
   queueIndex: number;
-  unsoldIds: string;
-  soldLog: string;
+  unsoldIds: string;       // JSON: string[]  (accumulated, not current queue)
+  soldLog: string;         // JSON: SoldEntry[]
   currentBid: number;
   currentBidderTeamId: string | null;
-  timerEnd: number;
-  poolBreakEnd: number;     // 0 = not in break
-  announcement: string;
-  speechText: string;       // TTS text broadcast to all clients
-  speechSeq: number;        // increments to trigger re-speak
+  biddingStartAt: number;  // epoch ms when bidding opens; 0 = open immediately
+  timerEnd: number;        // epoch ms when timer expires (biddingStartAt + TIMER_NORMAL)
+  poolBreakEnd: number;    // epoch ms when break ends; 0 = not in break
+  announcement: string;    // visible text
+  speechText: string;      // TTS text broadcast
+  speechSeq: number;       // increments to retrigger TTS on all clients
   hammerTeamId: string | null;
   bidCount: number;
 }
