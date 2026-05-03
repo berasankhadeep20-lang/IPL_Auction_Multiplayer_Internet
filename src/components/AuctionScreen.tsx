@@ -41,7 +41,7 @@ function spawnConfetti(){
 
 export default function AuctionScreen(){
   const store=useGameStore();
-  const{placeBid,undoLastBid,sendChat}=useGameRoom();
+  const{placeBid,sendChat,simulatePool,simulateAll}=useGameRoom();
   const room=store.roomData; const auction=room?.auction;
 
   const[timeLeft,setTimeLeft]=useState(0);
@@ -296,9 +296,7 @@ export default function AuctionScreen(){
           📋 Bids{bidHistory.length>0?` (${bidHistory.length})`:''}
         </button>
         <button className="btn btn-ghost btn-sm" onClick={()=>setShowPredictor(true)}>📊 Predictor</button>
-        {store.isHost&&auction.lastSoldEntry!=='null'&&(
-          <button className="btn btn-ghost btn-sm" style={{color:'var(--red)',borderColor:'var(--red)'}} onClick={undoLastBid}>↩️ Undo</button>
-        )}
+
       </div>
 
       {showBidHistory&&bidHistory.length>0&&(
@@ -411,6 +409,18 @@ export default function AuctionScreen(){
           <button className="btn btn-ghost btn-sm" onClick={()=>store.setSoundEnabled(!store.soundEnabled)}>
             {store.soundEnabled?'🔊':'🔇'}
           </button>
+          {store.isHost&&(
+            <button className="btn btn-ghost btn-sm" style={{color:'#f59e0b',borderColor:'#f59e0b55',fontSize:10}}
+              onClick={simulatePool} title="Skip current pool">
+              ⏭️ Pool
+            </button>
+          )}
+          {store.isHost&&(
+            <button className="btn btn-ghost btn-sm" style={{color:'#ef4444',borderColor:'#ef444455',fontSize:10}}
+              onClick={simulateAll} title="Simulate entire auction">
+              ⚡ All
+            </button>
+          )}
           <button className="btn btn-ghost btn-sm" style={{position:'relative'}}
             onClick={()=>store.setShowChat(!store.showChat)}>
             💬{showUnreadDot&&<span style={{position:'absolute',top:2,right:2,width:7,height:7,
