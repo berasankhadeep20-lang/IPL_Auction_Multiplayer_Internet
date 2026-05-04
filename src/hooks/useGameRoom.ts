@@ -92,14 +92,19 @@ export function useGameRoom() {
 
   // ── Speak, then open bidding (host only) ──────────────────────────────
   const speakAndOpen = useCallback(async (phrases: string[], roomId: string, dur: number) => {
-    speakingRoom.current = roomId;
-    if (store.soundEnabled) await speakChain(phrases.filter(Boolean), { rate: 0.88 });
-    if (speakingRoom.current !== roomId) return;
-    const now = Date.now();
+    // Write biddingStartAt BEFORE speaking — game is never blocked by TTS
+    const announceMs = phrases.filter(Boolean).join(' ').split(' ').length * 450; // ~450ms/word
+    const safeDelay  = Math.max(8_000, Math.min(18_000, announceMs));
+    const now        = Date.now();
+    const biddingAt  = now + safeDelay;
     await update(ref(db, `rooms/${roomId}/auction`), {
-      biddingStartAt: now,
-      timerEnd: now + dur,
+      biddingStartAt: biddingAt,
+      timerEnd:       biddingAt + dur,
     });
+    // Then speak (fire-and-forget — failure won't freeze game)
+    if (store.soundEnabled) {
+      speakChain(phrases.filter(Boolean), { rate: 0.88 }).catch(() => {});
+    }
   }, [store.soundEnabled]);
 
   // ── HOST main timer ───────────────────────────────────────────────────
@@ -112,8 +117,9 @@ export function useGameRoom() {
       if (!data) return;
       const { auction } = data;
       if (!['auction', 'rapid'].includes(auction.phase)) return;
-      // biddingStartAt === 0 means speech in progress — skip
+      // biddingStartAt === 0 means not yet started (waiting for speech)
       if (auction.biddingStartAt === 0 || auction.timerEnd === 0) return;
+      // Still in announce window — show countdown but don't expire
       if (Date.now() < auction.biddingStartAt) return;
 
       const left = Math.ceil((auction.timerEnd - Date.now()) / 1000);
@@ -147,12 +153,17 @@ export function useGameRoom() {
     breakTimerRef.current = setInterval(() => {
       const data = useGameStore.getState().roomData;
       if (!data || data.auction.phase !== 'break') return;
-      if (data.auction.poolBreakEnd === 0) return; // safety
-      if (Date.now() >= data.auction.poolBreakEnd && !processing.current) {
+      if (data.auction.poolBreakEnd === 0) return;
+      const overdue = Date.now() - data.auction.poolBreakEnd;
+      // Trigger if break ended, with up to 3s leeway; also force if stuck >10s past end
+      if ((overdue >= 0 || overdue > -200) && !processing.current) {
         processing.current = true;
-        startNextPool(data).finally(() => setTimeout(() => { processing.current = false; }, 600));
+        startNextPool(data).finally(() => {
+          // Always clear processing — never leave it stuck
+          setTimeout(() => { processing.current = false; }, 800);
+        });
       }
-    }, 800);
+    }, 500); // check every 500ms for responsiveness
 
     return () => { if (breakTimerRef.current) clearInterval(breakTimerRef.current); };
   }, [store.isHost, store.roomId]);
@@ -168,7 +179,7 @@ export function useGameRoom() {
       const { auction, teams } = data;
       if (!['auction', 'rapid'].includes(auction.phase)) return;
       if (auction.biddingStartAt === 0 || auction.timerEnd === 0) return;
-      if (Date.now() < auction.biddingStartAt) return;
+      if (Date.now() < auction.biddingStartAt) return; // still announcing
 
       const timeLeft = auction.timerEnd - Date.now();
       if (timeLeft < 1200) return; // never bid in last 1.2s
@@ -329,7 +340,8 @@ export function useGameRoom() {
       await new Promise(r => setTimeout(r, POST_RESULT_GAP));
       await speakAndOpen([...resultPhrases, ...nextPhrases].filter(Boolean), roomId, dur);
     } else if (store.soundEnabled) {
-      await speakChain(resultPhrases, { rate: 0.88 });
+      // Speak result (sold/unsold) — fire and forget
+      speakChain(resultPhrases, { rate: 0.88 }).catch(() => {});
     }
   };
 
@@ -346,15 +358,21 @@ export function useGameRoom() {
     const fp      = getPlayerById(queue[pool.start]);
     const phrases = [announcePool(pool.label), fp ? announcePlayer(fp) : ''].filter(Boolean);
 
-    // Write new state with bidding locked
+    // ── FIX: Write FULL open state immediately — don't wait for speech ──
+    // Speech is fire-and-forget so a TTS failure can never freeze the game
+    const announceMs = 14_000; // 14s for auctioneer to finish speaking
+    const now        = Date.now();
+    const biddingAt  = now + announceMs;
+    const timerEnds  = biddingAt + TIMER_NORMAL;
+
     await update(ref(db, `rooms/${roomId}/auction`), {
       phase:               'auction',
       queueIndex:          pool.start,
       currentBid:          fp?.basePrice ?? 0,
       currentBidderTeamId: null,
-      biddingStartAt:      0,
-      timerEnd:            0,
-      poolBreakEnd:        0,   // ← CLEAR the break, so timer won't re-fire
+      biddingStartAt:      biddingAt,   // ← set immediately, not after speech
+      timerEnd:            timerEnds,   // ← set immediately
+      poolBreakEnd:        0,           // ← clear break
       hammerTeamId:        null,
       bidCount:            0,
       bidHistory:          '[]',
@@ -364,8 +382,10 @@ export function useGameRoom() {
       speechSeq:           auction.speechSeq + 1,
     });
 
-    await new Promise(r => setTimeout(r, 600));
-    await speakAndOpen(phrases, roomId, TIMER_NORMAL);
+    // Fire-and-forget TTS — game continues even if this fails/hangs
+    if (useGameStore.getState().soundEnabled) {
+      speakChain(phrases, { rate: 0.88 }).catch(() => {});
+    }
   };
 
   // ── Simulate: skip one pool instantly (debug) ─────────────────────────

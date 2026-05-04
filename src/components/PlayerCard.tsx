@@ -17,7 +17,7 @@ function Img({ src, style }: { src: string; style: React.CSSProperties }) {
 
 export default function PlayerCard({ player, large, price, flip }: Props) {
   const [revealed, setRevealed] = useState(!flip);
-  const img = getPlayerImage(player.id);
+  const img = getPlayerImage(player.id) ?? '';
   const rc = ROLE_COLOR[player.role];
 
   useEffect(() => {
