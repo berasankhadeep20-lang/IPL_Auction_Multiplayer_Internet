@@ -162,7 +162,9 @@ export function useGameRoom() {
       if (breakProcessing.current) return;
       breakProcessing.current = true;
       // Always get freshest data before starting next pool
-      get(ref(db, `rooms/${store.roomId!}`)).then(snap => {
+      const bRoomId = useGameStore.getState().roomId;
+      if (!bRoomId) { breakProcessing.current = false; return; }
+      get(ref(db, `rooms/${bRoomId}`)).then(snap => {
         const fresh = snap.val() as RoomData | null;
         if (!fresh || fresh.auction.phase !== 'break') {
           breakProcessing.current = false;
@@ -364,6 +366,11 @@ export function useGameRoom() {
     const pool  = pools[auction.currentPoolIdx];
     if (!pool) return;
 
+    // Safety: pool.start must be within queue
+    if (pool.start >= queue.length) {
+      console.error('startNextPool: pool.start out of bounds', pool.start, queue.length);
+      return;
+    }
     const fp      = getPlayerById(queue[pool.start]);
     const phrases = [announcePool(pool.label), fp ? announcePlayer(fp) : ''].filter(Boolean);
 
@@ -437,7 +444,8 @@ export function useGameRoom() {
       newSoldLog.push({ playerId: pid, teamId: tid, price });
     }
 
-    const nextPoolIdx = pools.indexOf(curPool) + 1;
+    const curPoolIdx  = pools.indexOf(curPool);
+    const nextPoolIdx = curPoolIdx + 1;
     const nextPool    = pools[nextPoolIdx];
     const nextPhase: AuctionData['phase'] = nextPool ? 'break' : (sp<string[]>(auction.unsoldIds,[]).length > 0 ? 'rapid' : 'finished');
     const BREAK_MS = 4000; // 4s break for simulation
@@ -448,7 +456,7 @@ export function useGameRoom() {
       ...auction,
       phase: nextPhase,
       queueIndex:     nextPool ? nextPool.start : queue.length,
-      currentPoolIdx: nextPoolIdx,
+      currentPoolIdx: nextPool ? nextPoolIdx : curPoolIdx, // never go out of bounds
       soldLog: JSON.stringify(newSoldLog),
       currentBid: 0, currentBidderTeamId: null,
       biddingStartAt: 0, timerEnd: 0,
@@ -461,16 +469,25 @@ export function useGameRoom() {
     };
     await update(ref(db), batch);
 
-    // For simulate: directly trigger next pool after break duration (don't rely on interval)
+    // For simulate: directly call startNextPool after break via fresh Firebase read
     if (nextPhase === 'break' && nextPool) {
       if (safetyTimer.current) clearTimeout(safetyTimer.current);
+      const snapRoomId = roomId;
       safetyTimer.current = setTimeout(async () => {
-        const fresh = useGameStore.getState().roomData;
-        if (fresh && fresh.auction.phase === 'break') {
-          breakProcessing.current = true;
-          await startNextPool(fresh).finally(() => { breakProcessing.current = false; });
+        if (breakProcessing.current) return;
+        breakProcessing.current = true;
+        try {
+          const snap = await get(ref(db, `rooms/${snapRoomId}`));
+          const fresh = snap.val() as RoomData | null;
+          if (fresh && fresh.auction.phase === 'break') {
+            await startNextPool(fresh);
+          }
+        } catch(e) {
+          console.error('safetyTimer startNextPool failed', e);
+        } finally {
+          breakProcessing.current = false;
         }
-      }, BREAK_MS + 500);
+      }, BREAK_MS + 600);
     }
   }, [store.roomId, store.roomData]);
 
