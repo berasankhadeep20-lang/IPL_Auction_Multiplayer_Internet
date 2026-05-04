@@ -33,7 +33,9 @@ export function useGameRoom() {
   const breakTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const aiTickRef     = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const processing    = useRef(false);
+  const processing      = useRef(false);
+  const breakProcessing = useRef(false);
+  const safetyTimer     = useRef<ReturnType<typeof setTimeout>|null>(null);
   const speakingRoom  = useRef<string | null>(null);
   const prevSeq       = useRef(-1);
   const prevBidCnt    = useRef(-1);
@@ -154,16 +156,23 @@ export function useGameRoom() {
       const data = useGameStore.getState().roomData;
       if (!data || data.auction.phase !== 'break') return;
       if (data.auction.poolBreakEnd === 0) return;
-      const overdue = Date.now() - data.auction.poolBreakEnd;
-      // Trigger if break ended, with up to 3s leeway; also force if stuck >10s past end
-      if ((overdue >= 0 || overdue > -200) && !processing.current) {
-        processing.current = true;
-        startNextPool(data).finally(() => {
-          // Always clear processing — never leave it stuck
-          setTimeout(() => { processing.current = false; }, 800);
+      // Only trigger when break time has actually elapsed
+      if (Date.now() < data.auction.poolBreakEnd) return;
+      // Use separate lock from main timer to avoid conflicts
+      if (breakProcessing.current) return;
+      breakProcessing.current = true;
+      // Always get freshest data before starting next pool
+      get(ref(db, `rooms/${store.roomId!}`)).then(snap => {
+        const fresh = snap.val() as RoomData | null;
+        if (!fresh || fresh.auction.phase !== 'break') {
+          breakProcessing.current = false;
+          return;
+        }
+        startNextPool(fresh).finally(() => {
+          setTimeout(() => { breakProcessing.current = false; }, 1000);
         });
-      }
-    }, 500); // check every 500ms for responsiveness
+      }).catch(() => { breakProcessing.current = false; });
+    }, 400);
 
     return () => { if (breakTimerRef.current) clearInterval(breakTimerRef.current); };
   }, [store.isHost, store.roomId]);
@@ -392,6 +401,10 @@ export function useGameRoom() {
   const simulatePool = useCallback(async () => {
     const { roomId, roomData } = store;
     if (!roomId || !roomData) return;
+    // Reset all locks so simulation is never blocked by a stuck timer
+    processing.current      = false;
+    breakProcessing.current = false;
+
     const { auction, teams } = roomData;
     const queue   = sp<string[]>(auction.queue, []);
     const pools   = sp<PoolMeta[]>(auction.pools, []);
@@ -401,48 +414,71 @@ export function useGameRoom() {
 
     const batch: Record<string, unknown> = {};
     const newSoldLog = [...soldLog];
-    const newTeams   = { ...teams };
+    const newTeams: Record<string, TeamState> = JSON.parse(JSON.stringify(teams));
 
-    // Quickly sell remaining players in pool to random AI teams
+    // Sell remaining players in pool to random AI teams with realistic prices
     for (let i = auction.queueIndex; i < curPool.end; i++) {
-      const pid  = queue[i];
-      const pl   = getPlayerById(pid);
+      const pid = queue[i];
+      const pl  = getPlayerById(pid);
       if (!pl) continue;
-      const aiEntries = Object.entries(newTeams).filter(([, t]) => t.isAI && t.purse >= pl.basePrice);
-      if (aiEntries.length === 0) continue;
-      const [tid, team] = aiEntries[Math.floor(Math.random() * aiEntries.length)];
-      const price = pl.basePrice;
-      const prev  = sp<SoldEntry[]>((newTeams[tid] as TeamState).soldPlayers, []);
-      newTeams[tid] = { ...(newTeams[tid] as TeamState), purse: (newTeams[tid] as TeamState).purse - price, soldPlayers: JSON.stringify([...prev, { playerId: pid, teamId: tid, price }]) };
+      if (Math.random() < 0.15) continue; // ~15% chance unsold
+      const eligible = Object.entries(newTeams).filter(([, t]) => t.isAI && t.purse >= pl.basePrice);
+      if (eligible.length === 0) continue;
+      const [tid] = eligible[Math.floor(Math.random() * eligible.length)];
+      const extraBids = Math.floor(Math.random() * 8);
+      let price = pl.basePrice;
+      for (let b = 0; b < extraBids; b++) {
+        const next = price + (price < 100 ? 5 : price < 200 ? 10 : price < 500 ? 20 : 25);
+        if (next > newTeams[tid].purse) break;
+        price = next;
+      }
+      const prev = sp<SoldEntry[]>(newTeams[tid].soldPlayers, []);
+      newTeams[tid] = { ...newTeams[tid], purse: newTeams[tid].purse - price, soldPlayers: JSON.stringify([...prev, { playerId: pid, teamId: tid, price }]) };
       newSoldLog.push({ playerId: pid, teamId: tid, price });
     }
 
-    // Move to next pool or break
     const nextPoolIdx = pools.indexOf(curPool) + 1;
     const nextPool    = pools[nextPoolIdx];
-    const nextPhase: AuctionData['phase'] = nextPool ? 'break' : 'finished';
-    const poolBreakEnd = nextPool ? Date.now() + 5000 : 0; // 5s simulate break
+    const nextPhase: AuctionData['phase'] = nextPool ? 'break' : (sp<string[]>(auction.unsoldIds,[]).length > 0 ? 'rapid' : 'finished');
+    const BREAK_MS = 4000; // 4s break for simulation
+    const poolBreakEnd = nextPhase === 'break' ? Date.now() + BREAK_MS : 0;
 
     for (const [tid, ts] of Object.entries(newTeams)) batch[`rooms/${roomId}/teams/${tid}`] = ts;
     batch[`rooms/${roomId}/auction`] = {
       ...auction,
       phase: nextPhase,
-      queueIndex: nextPool ? nextPool.start : queue.length,
-      currentPoolIdx: nextPool ? nextPoolIdx : auction.currentPoolIdx,
+      queueIndex:     nextPool ? nextPool.start : queue.length,
+      currentPoolIdx: nextPoolIdx,
       soldLog: JSON.stringify(newSoldLog),
       currentBid: 0, currentBidderTeamId: null,
       biddingStartAt: 0, timerEnd: 0,
       poolBreakEnd,
       hammerTeamId: null, bidCount: 0, bidHistory: '[]', lastSoldEntry: 'null',
-      announcement: nextPool ? `⏸️ Pool done — ${nextPool.label} in 5s` : '🏆 All pools done!',
+      announcement: nextPhase === 'break'
+        ? `⏸️ Pool done — ${nextPool?.label} starts in ${BREAK_MS/1000}s`
+        : nextPhase === 'finished' ? '🏆 All pools done!' : '⚡ Starting Rapid Round!',
       speechText: '', speechSeq: auction.speechSeq + 1,
     };
     await update(ref(db), batch);
+
+    // For simulate: directly trigger next pool after break duration (don't rely on interval)
+    if (nextPhase === 'break' && nextPool) {
+      if (safetyTimer.current) clearTimeout(safetyTimer.current);
+      safetyTimer.current = setTimeout(async () => {
+        const fresh = useGameStore.getState().roomData;
+        if (fresh && fresh.auction.phase === 'break') {
+          breakProcessing.current = true;
+          await startNextPool(fresh).finally(() => { breakProcessing.current = false; });
+        }
+      }, BREAK_MS + 500);
+    }
   }, [store.roomId, store.roomData]);
 
   const simulateAll = useCallback(async () => {
     const { roomId, roomData } = store;
     if (!roomId || !roomData) return;
+    processing.current      = false;
+    breakProcessing.current = false;
     const { auction, teams } = roomData;
     const queue   = sp<string[]>(auction.queue, []);
     const soldLog = sp<SoldEntry[]>(auction.soldLog, []);
