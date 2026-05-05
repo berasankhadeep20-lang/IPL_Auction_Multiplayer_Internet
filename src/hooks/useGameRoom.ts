@@ -10,7 +10,7 @@ import { computeAIBid } from '../utils/aiPlayer';
 import { SoldEntry, RoomData, SQUAD_RULES, AuctionData, TeamState, PoolMeta, BidHistoryEntry, ChatMessage } from '../types';
 import { playHammer, playBidPlaced, playCrowdCheer, playTimerTick, playUnsold, playNewPlayer } from '../utils/sounds';
 import {
-  speak, speakChain,
+  speak, speakOne, speakChain,
   announcePool, announcePlayer, announceSold, announceUnsold,
   announceBreak, announceRapid, announceGoingOnce, announceGoingTwice,
 } from '../utils/speech';
@@ -36,6 +36,7 @@ export function useGameRoom() {
   const processing      = useRef(false);
   const breakProcessing = useRef(false);
   const safetyTimer     = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const lastGoingQIdx   = useRef(-1); // which player goingOnce/Twice was for
   const speakingRoom  = useRef<string | null>(null);
   const prevSeq       = useRef(-1);
   const prevBidCnt    = useRef(-1);
@@ -94,19 +95,30 @@ export function useGameRoom() {
 
   // ── Speak, then open bidding (host only) ──────────────────────────────
   const speakAndOpen = useCallback(async (phrases: string[], roomId: string, dur: number) => {
-    // Write biddingStartAt BEFORE speaking — game is never blocked by TTS
-    const announceMs = phrases.filter(Boolean).join(' ').split(' ').length * 450; // ~450ms/word
-    const safeDelay  = Math.max(8_000, Math.min(18_000, announceMs));
-    const now        = Date.now();
-    const biddingAt  = now + safeDelay;
-    await update(ref(db, `rooms/${roomId}/auction`), {
-      biddingStartAt: biddingAt,
-      timerEnd:       biddingAt + dur,
-    });
-    // Then speak (fire-and-forget — failure won't freeze game)
-    if (store.soundEnabled) {
-      speakChain(phrases.filter(Boolean), { rate: 0.88 }).catch(() => {});
+    const filtered = phrases.filter(Boolean);
+    let spokenMs = 0;
+
+    if (store.soundEnabled && filtered.length > 0) {
+      // Speak first — await actual completion for adaptive timing
+      // Wrapped in a race with a max-time safety so game never freezes
+      const MAX_ANNOUNCE = 22_000; // absolute ceiling 22s
+      spokenMs = await Promise.race([
+        speakChain(filtered, { rate: 0.9 }),
+        new Promise<number>(r => setTimeout(() => r(MAX_ANNOUNCE), MAX_ANNOUNCE)),
+      ]) as number;
     }
+
+    // Only open bidding if we're still in the same room
+    const currentRoomId = useGameStore.getState().roomId;
+    if (currentRoomId !== roomId) return;
+
+    // Add a tiny buffer after speech ends before opening bids
+    const buffer = 600;
+    const now    = Date.now();
+    await update(ref(db, `rooms/${roomId}/auction`), {
+      biddingStartAt: now + buffer,
+      timerEnd:       now + buffer + dur,
+    });
   }, [store.soundEnabled]);
 
   // ── HOST main timer ───────────────────────────────────────────────────
@@ -119,20 +131,28 @@ export function useGameRoom() {
       if (!data) return;
       const { auction } = data;
       if (!['auction', 'rapid'].includes(auction.phase)) return;
-      // biddingStartAt === 0 means not yet started (waiting for speech)
+      // biddingStartAt === 0 means speech still playing — wait
       if (auction.biddingStartAt === 0 || auction.timerEnd === 0) return;
-      // Still in announce window — show countdown but don't expire
+      // Still in announce window — wait for bidding to open
       if (Date.now() < auction.biddingStartAt) return;
+
+      // Reset going-once/twice flags when player changes
+      if (auction.queueIndex !== lastGoingQIdx.current) {
+        goingOnce.current  = false;
+        goingTwice.current = false;
+        lastGoingQIdx.current = auction.queueIndex;
+      }
 
       const left = Math.ceil((auction.timerEnd - Date.now()) / 1000);
 
-      if (left <= 8 && left > 4 && !goingOnce.current && auction.bidCount > 0 && store.soundEnabled) {
+      if (left <= 8 && left > 4 && !goingOnce.current && store.soundEnabled) {
         goingOnce.current = true;
-        speak(announceGoingOnce(auction.currentBid), { cancel: false });
+        // Use speakOne so it doesn't cancel bid announcement speech
+        speakOne(announceGoingOnce(auction.currentBid), { rate: 0.9, cancel: false });
       }
-      if (left <= 4 && left > 1 && !goingTwice.current && auction.bidCount > 0 && store.soundEnabled) {
+      if (left <= 4 && left > 1 && !goingTwice.current && store.soundEnabled) {
         goingTwice.current = true;
-        speak(announceGoingTwice(auction.currentBid), { cancel: false });
+        speakOne(announceGoingTwice(auction.currentBid), { rate: 0.9, cancel: false });
       }
       if (left <= 5 && left > 0 && store.soundEnabled) playTimerTick(left <= 2);
 
@@ -398,10 +418,8 @@ export function useGameRoom() {
       speechSeq:           auction.speechSeq + 1,
     });
 
-    // Fire-and-forget TTS — game continues even if this fails/hangs
-    if (useGameStore.getState().soundEnabled) {
-      speakChain(phrases, { rate: 0.88 }).catch(() => {});
-    }
+    // Speak adaptively then open bidding
+    await speakAndOpen(phrases, roomId, TIMER_NORMAL);
   };
 
   // ── Simulate: skip one pool instantly (debug) ─────────────────────────
