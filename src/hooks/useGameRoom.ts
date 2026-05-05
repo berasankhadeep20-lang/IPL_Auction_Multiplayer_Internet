@@ -394,21 +394,15 @@ export function useGameRoom() {
     const fp      = getPlayerById(queue[pool.start]);
     const phrases = [announcePool(pool.label), fp ? announcePlayer(fp) : ''].filter(Boolean);
 
-    // ── FIX: Write FULL open state immediately — don't wait for speech ──
-    // Speech is fire-and-forget so a TTS failure can never freeze the game
-    const announceMs = 14_000; // 14s for auctioneer to finish speaking
-    const now        = Date.now();
-    const biddingAt  = now + announceMs;
-    const timerEnds  = biddingAt + TIMER_NORMAL;
-
+    // Write locked state (biddingStartAt=0 means "speech in progress, not open yet")
     await update(ref(db, `rooms/${roomId}/auction`), {
       phase:               'auction',
       queueIndex:          pool.start,
       currentBid:          fp?.basePrice ?? 0,
       currentBidderTeamId: null,
-      biddingStartAt:      biddingAt,   // ← set immediately, not after speech
-      timerEnd:            timerEnds,   // ← set immediately
-      poolBreakEnd:        0,           // ← clear break
+      biddingStartAt:      0,     // locked — speakAndOpen will set this adaptively
+      timerEnd:            0,     // locked
+      poolBreakEnd:        0,     // break cleared
       hammerTeamId:        null,
       bidCount:            0,
       bidHistory:          '[]',
@@ -418,7 +412,7 @@ export function useGameRoom() {
       speechSeq:           auction.speechSeq + 1,
     });
 
-    // Speak adaptively then open bidding
+    // Speak fully, THEN open bidding — adaptive to actual speech duration
     await speakAndOpen(phrases, roomId, TIMER_NORMAL);
   };
 
