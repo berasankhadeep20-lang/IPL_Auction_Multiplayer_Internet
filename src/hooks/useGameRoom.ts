@@ -96,28 +96,39 @@ export function useGameRoom() {
   // ── Speak, then open bidding (host only) ──────────────────────────────
   const speakAndOpen = useCallback(async (phrases: string[], roomId: string, dur: number) => {
     const filtered = phrases.filter(Boolean);
-    let spokenMs = 0;
+
+    // Estimate minimum wait based on word count (400ms/word at rate 0.9)
+    // This is the floor — even if TTS silently fails, we wait this long
+    // so non-host clients have time to hear the announcement via speechSeq
+    const wordCount   = filtered.join(' ').split(/\s+/).length;
+    const estimatedMs = Math.max(4_000, Math.ceil(wordCount * 440));
+    const MAX_MS      = 24_000;
+
+    const started = Date.now();
 
     if (store.soundEnabled && filtered.length > 0) {
-      // Speak first — await actual completion for adaptive timing
-      // Wrapped in a race with a max-time safety so game never freezes
-      const MAX_ANNOUNCE = 22_000; // absolute ceiling 22s
-      spokenMs = await Promise.race([
+      // Race: actual speech vs max ceiling
+      await Promise.race([
         speakChain(filtered, { rate: 0.9 }),
-        new Promise<number>(r => setTimeout(() => r(MAX_ANNOUNCE), MAX_ANNOUNCE)),
-      ]) as number;
+        new Promise<void>(r => setTimeout(r, MAX_MS)),
+      ]);
     }
 
-    // Only open bidding if we're still in the same room
+    // Ensure we have waited at LEAST the estimated time
+    // (guards against TTS silent failure resolving instantly)
+    const elapsed = Date.now() - started;
+    if (elapsed < estimatedMs) {
+      await new Promise(r => setTimeout(r, estimatedMs - elapsed));
+    }
+
+    // Only open bidding if still in same room
     const currentRoomId = useGameStore.getState().roomId;
     if (currentRoomId !== roomId) return;
 
-    // Add a tiny buffer after speech ends before opening bids
-    const buffer = 600;
-    const now    = Date.now();
+    const now = Date.now();
     await update(ref(db, `rooms/${roomId}/auction`), {
-      biddingStartAt: now + buffer,
-      timerEnd:       now + buffer + dur,
+      biddingStartAt: now + 500, // 500ms grace after speech
+      timerEnd:       now + 500 + dur,
     });
   }, [store.soundEnabled]);
 
